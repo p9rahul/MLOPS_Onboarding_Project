@@ -1,0 +1,33 @@
+resources:
+  repositories:
+    -repository: templates
+     type: git
+     name: Pipeline-Templates
+     ref: refs/heads/testimage
+
+trigger:
+  branches:
+    include:
+      - staging
+      - master
+  paths:
+    include:
+     - variables.json
+  
+ pool:
+  vmImage: ubuntu-18.04
+
+stages:
+  - template: build-staging.yml@templates
+    parameters:
+      grp: MLOPs-Scope-Staging-USE
+      subName: $(subname_stg)
+      pipelinetype: $(pipeline_type)
+  - template: staging.yml@templates
+    parameters:
+      grp: MLOPs-Scope-Staging-USE
+      subName: $(subname_stg)
+  - template: prod.yml@templates
+    parameters:
+      grp: MLOPs-Scope-Prod-USE
+      subName: $(subname_stg)

@@ -1,0 +1,19 @@
+stages:
+  - stage: Build_prod
+    dependsOn: []
+    condition: and (succe)
+    variables:
+    - group: ${{parameters.grp}}
+    - name: var_pipelinetype
+      value: ${{parameters.var_pipelinetype}}
+
+    jobs:
+      -job: Build
+       timeoutInMinutes: 240
+       steps:
+        - checkout: self
+          path: self
+
+        - pwsh: |
+            $dataVal= Get-Content
+         

@@ -1,0 +1,8 @@
+{
+    "Domain" : "NLP",
+    "Sol_Type" : "Classification",
+    "Algorithm" : "Desison Tree",
+    "Neural_Network" : "None",
+    "Stage" : "production",
+    "Framework" : "Keras"
+}

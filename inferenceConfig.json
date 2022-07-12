@@ -1,0 +1,8 @@
+{
+    "entryScript" : "SalDemoScoring.py",
+    "runtime" : "python",
+    "condaFile" : "../Dependencies/conda.yml",
+    "extraDockerfileSteps" : null,
+    "sourceDirectory" : "Score",
+    "baseImage" : "mcr.microsoft.com/azureml/openmpi 4.1.0-ubuntu 20.04:20220601.v1"
+}

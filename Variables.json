@@ -1,0 +1,8 @@
+{
+    "serviceName" : "Pass serviceName",
+    "ModelName" : "salpred",
+    "ModelFileName" : "sal_model.pkl",
+    "ImageName" : "testbaseimage",
+    "ImageLabel" : "v1",
+    "description" : "testbaseimg"
+}

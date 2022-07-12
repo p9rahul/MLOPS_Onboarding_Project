@@ -1,0 +1,17 @@
+{
+    "computeType" : "aks",
+    "autoScaler" :
+    {
+        "autoscaleEnabled" : true,
+        "minReplicas" : 1,
+        "maxReplicas" :3,
+        "targetUtilization" :70
+    },
+    "containerResourceRequirements":
+    {
+        "cpu" : 0.2,
+        "memoryInGB":0.3
+    },
+    "maxConcurrentRequestsPerContainer" : 10,
+    "maxQueueWaitsMs" :500
+}
