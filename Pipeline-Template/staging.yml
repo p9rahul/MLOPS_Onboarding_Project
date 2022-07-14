@@ -1,0 +1,304 @@
+stages:
+  - stage: Build_Staging
+    condition: and (succeeded(), na(variable['build.sourceBranch'], 'refs/heads/master'))
+    variables:
+    - group: ${{parameters.grp}}
+    - name: var_pipelinetype
+      value: ${{parameters.var_pipelinetype}}
+
+    jobs:
+      -job: Build
+       timeoutInMinutes: 240
+       steps:
+        - checkout: self
+          path: self
+
+        - pwsh: |
+            $dataVal= Get-Content -Raw -Path "Variables.json" | ConvertFrom-Json
+
+            if($dataVal.ImageName -cmatch '^[a-z0-9] + [a-z0-9-_.]*[a-z0-9]$'){
+              write-host ("Imagename validation is successfull")
+            }
+            else{
+              Write-Host "##vaso[task.LogIssue type=error;] provided ImageName is invalid. It must only consist 
+              of lowercase letters, numbers, periods, dashes, undrscores and start/end with a latter or number"
+              exit 1
+            }
+
+            $measureObject = $dataVal.serviceName | Measure-Object -Character;
+            $count = $measureObject.characters;
+
+            if($count -ge 3 -and $count -le 17){
+              write-host ("service name length validation is successful")
+            }
+            else{
+               Write-Host "##vaso[task.LogIssue type=error;] Incorrect length of service name. It should be always 
+               between 3 and 17 characters"
+               exit 1
+            }
+
+            if($dataVal.serviceName -cmatch '^[a-z] + [a-z0-9-_.]*[a-z0-9]$'){
+              write-host ("service naming convention validation is successful")
+            }
+            else{
+               Write-Host "##vaso[task.LogIssue type=error;] Incorrect length of service name. It should be always 
+               between 3 and 17 characters"
+               exit 1
+            }
+          displayName: 'Validation Variables.json file'
+
+        - pwsh: |
+            $dataVal= Get-Content -Raw -Path "Deploymentconfig.json" | ConvertFrom-Json
+            if(){
+
+            }esle{
+
+            }
+          displayName: 'Validate deployment config parameters'
+          condition: or(eq(variables[var_pipelinetype],'ado') , eq(variables[var_pipelinetype],'stg'))
+
+        - pwsh: |
+            $dataVal= Get-Content -Raw -Path "Deploymentconfig.json" | ConvertFrom-Json
+            if(){
+
+            }esle{
+
+            }
+          displayName: 'Validate deployment config parameters -exceptions'
+          condition: or(eq(variables[var_pipelinetype],'exp') , eq(variables[var_pipelinetype],'stg_exp'))
+        
+        - pwsh: |
+            $dataVal= Get-Content -Raw -Path "tags.json" | ConvertFrom-Json
+            if(){
+
+            }esle{
+
+            }
+          displayName: 'Validate mandatory tags'
+
+        - task: AzureCLI@2
+          displayName: 'Install Azure CLI ML Extension'
+          inputs:
+            azureSubscription: ${{parameters.subName}}
+            scriptLocation: inlineScript
+            scriptType: bash
+            inlineScript: |
+              #sudo apt remove azure-cli -y && sudo apt autoremove -y;
+              #sudo apt-get update
+              #sudo apt-get install ca-certificates curl apt-tannsport-https lsb-release gnupg;
+              #curl -sL 
+              #AZ_REPo=${lsb_release -cs}
+              az extension add -n azure-cli-ml
+
+          - task: OneLuckiDev.json2variable.vsts-json-to-variable.oneLuckiDevJson2Variable@1
+            displayName: 'JSON to Variable'
+            inputs:
+             jsonFile: 'Variables.json'  #-- your json file here whcih required parsing -> using this plugin --
+             shouldPrefixVariables: true
+             variablePrefix: prefixNameHere
+
+          - task: AzureCLI@2
+            displayName: 'Download model'
+            inputs:
+              azureSubscription: ${{parameters.subName}}
+              scriptLocation: inlineScript
+              scriptType: bash
+              inlineScript: |
+                  sastokenvalue= $(az keyvault secret show --name sastoken --subscription
+                  $(keyvault_subscriptionId) --vault-name $(keyvaultName) --query value --output tsv);
+                  az storage copy -s
+                  https://$(storageAccountName).blob.core.windows.net/$(Build.SourceBranchName)-$(containerName)/$(ModelFileName) 
+                  -d "./" --sas-token "$sastokenvalue" --recursive --only-show-errors;
+            condition: or(eq(variables[var_pipelinetype],'exp') , eq(variables[var_pipelinetype],'stg_exp'))
+
+          - task: UsePythonVersion@0
+            displayName: 'Use python 3.6'  
+            inputs:
+              versionSpec: 3.6
+
+          - bash: 'pip install azureml-core'
+            displayName: 'Install azureml python library'
+
+          - task: PythonScript@0
+            displayName: 'Attach & register workspace'
+            inputs: 
+              scriptSource: inline
+              script: |
+                  import os
+                  import sys
+                  import json
+                  import azureml
+                  from azureml.core import Workspcace 
+                  from azureml.core.authentication import ServicePrincipalAuthentication
+                  from azureml.core.model import Model
+
+                  Workspcace_name= sys.argv[1]
+                  resource_group = sys.argv[2]
+                  subscription_id =sys.argv[3]
+                  my_tenant_id =sys.argv[4]
+                  my_service_principal_id =sys.argv[5]
+                  my_service_principal_password =sys.argv[6]
+                  model_file_name= sys.argv[7]
+                  modelName= sys.argv[8]
+                  Description =sys.argv[9]
+                  path ="./Model"
+
+                  svc_pr = ServicePrincipalAuthentication(
+                    tenane_id = my_tenant_id,
+                    service_principal_id =my_service_principal_id,
+                    service_principal_password = my_service_principal_password)
+
+                  ws = workspace(Workspcace_name= Workspcace_name,
+                  resource_group = resource_group,
+                  subscription_id = subscription_id,
+                  auth = svc_pr)
+
+                  with open('tags.json') as f:
+                    data = json.load(f)
+
+                  model = Model.register(model_path=os.path.join(path, model_file_name),
+                  model_name = modelName,
+                  tags=data,
+                  description = Description,
+                  workspace= ws)
+
+                  model_id =model.id
+
+                  data={
+                    "model_Id": model_id,
+                    "workspaceName": Workspcace_name,
+                    "resourceGroupName": resource_group
+                  }
+
+                  with open("modelmetadata.json", "W") as wtite_file:
+                   json.dump(data, write_file)
+                arguments: '$(workspaceName) $(resourceGroupName) $(subscriptionID)  $(tenaneid)
+                $(clientid) $(clientsecret) $(ModelFileName) $(modelName) "$(description)"'
+              condition: or(eq(variables[var_pipelinetype],'ado') , eq(variables[var_pipelinetype],'exp'))
+
+         - task: PythonScript@0
+            displayName: 'Attach & register workspace -storage account'
+            inputs: 
+              scriptSource: inline
+              script: |
+                  import os
+                  import sys
+                  import json
+                  import azureml
+                  from azureml.core import Workspcace 
+                  from azureml.core.authentication import ServicePrincipalAuthentication
+                  from azureml.core.model import Model
+
+                  Workspcace_name= sys.argv[1]
+                  resource_group = sys.argv[2]
+                  subscription_id =sys.argv[3]
+                  my_tenant_id =sys.argv[4]
+                  my_service_principal_id =sys.argv[5]
+                  my_service_principal_password =sys.argv[6]
+                  model_file_name= sys.argv[7]
+                  modelName= sys.argv[8]
+                  Description =sys.argv[9]
+                  path ="./Model"
+
+                  svc_pr = ServicePrincipalAuthentication(
+                    tenane_id = my_tenant_id,
+                    service_principal_id =my_service_principal_id,
+                    service_principal_password = my_service_principal_password)
+
+                  ws = workspace(Workspcace_name= Workspcace_name,
+                  resource_group = resource_group,
+                  subscription_id = subscription_id,
+                  auth = svc_pr)
+
+                  with open('tags.json') as f:
+                    data = json.load(f)
+
+                  model = Model.register(model_path=os.path.join(path, model_file_name),
+                  model_name = modelName,
+                  tags=data,
+                  description = Description,
+                  workspace= ws)
+
+                  model_id =model.id
+
+                  data={
+                    "model_Id": model_id,
+                    "workspaceName": Workspcace_name,
+                    "resourceGroupName": resource_group
+                  }
+
+                  with open("modelmetadata.json", "W") as wtite_file:
+                   json.dump(data, write_file)
+                arguments: '$(workspaceName) $(resourceGroupName) $(subscriptionID)  $(tenaneid)
+                $(clientid) $(clientsecret) $(ModelFileName) $(modelName) "$(description)"'
+              condition: or(eq(variables[var_pipelinetype],'stg') , eq(variables[var_pipelinetype],'stg_exp'))
+          
+
+          - task: AzureCLI@2
+            displayName: 'Package Model'
+            inputs:
+              azureSubscription: ${{parameters.subName}}
+              scriptLocation :inlineScript
+              scriptType: bash
+              inlineScript: |
+                  if ["$(debug)" = true]
+                  then
+                    az ml model package --InferenceConfig-file InferenceConfig.json
+                    --Image-Label $(ImageLabel) --image-name "azureml/azureml_$(ImageName)
+                    --model-metadata-file modelmetadata.json --resource-group $(resourceGroupName)
+                    --subscription-id $(subscriptionID) --workspace-name $(workspaceName) -v
+                  else
+                    az ml model package --InferenceConfig-file InferenceConfig.json
+                    --Image-Label $(ImageLabel) --image-name "azureml/azureml_$(ImageName)
+                    --model-metadata-file modelmetadata.json --resource-group $(resourceGroupName)
+                    --subscription-id $(subscriptionID) --workspace-name $(workspaceName)
+                  fi
+                  timeoutInMinutes: 240
+
+          - task: Docker@2
+            displayName: Docker login
+            inputs: 
+              containerRegistry: 'aqua-dockerregistry-nonprod'
+              command: 'login'
+
+          - task: aquasecScanner@4
+            displayName: Aqua Image scanning
+            inputs:
+              image: 'azureml/azureml_$(ImageName):$(ImageLabel)'
+              scanType: 'hosted'
+              register: true
+              showNegligible: false
+              windowsScannerVersion: '4.2.0'
+              scanner: ''
+              runOptions: ''
+              registry: '$(ACRName)'
+              connection: ''
+            continueOnError: true 
+          
+          - task: AzureCLI@2
+            displayName: "Remove Image from ACR"
+            inputs:
+              azureSubscription: ${{parameters.subName}}
+              scriptLocation: inlineScript
+              scriptType: bash
+              inlineScript: 'az acr repository delete --name ${ACRName) --image
+              "azureml/azureml_$(ImageName):$(ImageLabel)" --yes'
+            condition: always()
+
+          - task: CopyFiles@2
+            displayName: 'Copy Files to : $(build.ArtifactStagingDirectory)'
+            inputs: 
+              SourceFolder: '$(Build.SourceDirectory)'
+              Contents: |
+                  Dependencies/**
+                  Score/**
+                  Deploymentconfig.json
+                  InferenceConfig.json
+                  Variables.json
+                  modelMetadata.json
+              TargetFolder: '$(Build.ArtifactStagingDirectory)'
+
+          - task: PublishBuildArtifacts@1
+            displayName: 'Publish artifact: $(Build.Repository.Name)'
+            inputs:
+              ArtifactName: '$(Build.Repository.Name)'
