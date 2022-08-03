@@ -1,0 +1,193 @@
+- name: "Get date"
+  set_fact:
+    TimeStamp: "{{ lookup('pipe', 'date + %Y%m%d%H%M') }}"
+
+- name: Substring deploymentID productName
+  shell: >
+    echo "{{var_DeploymentID}}" | awk '{ print substr($0,1,3) }'
+  register: var_productName
+
+- name: Substring deploymentID projectName
+  shell: >
+    echo "{{var_DeploymentID}}" | awk '{ print substr($0, length($0)-2) }'
+  register: var_projectName
+
+- name: Add Deployment Id to compute names
+  set_fact:
+  var_computeName: "{{var_DeploymentID}} - {{var_computeName}}"
+  var_computeClusterName: "{{var_DeploymentID}} - {{var_computeClusterName}}"
+  var_akscomputeName: "{{var_DeploymentID}} - {{var_akscomputeName}}"
+
+- name: Set Variable for Prod
+  set_fact:
+    var_env: "Development"
+  when: var_mlopsEnv == "PROD"
+
+- name: Set Variable for QA
+  set_fact:
+    var_env: "QA"
+  when: var_mlopsEnv == "NON-PROD"
+
+- name: Set existing resource Names
+  set_fact:
+    var_aksName: "{{var_NamesDictionary[var_mlopsEnv][var_location].aksName}}"
+    var_certName: "{{var_NamesDictionary[var_mlopsEnv][var_location].certName}}"
+    var_certkeyName: "{{var_NamesDictionary[var_mlopsEnv][var_location].certkeyName}}"
+    var_certsslCName: "{{var_NamesDictionary[var_mlopsEnv][var_location].certsslCName}}"
+    var_askResourceGroupName: "{{var_NamesDictionary[var_mlopsEnv][var_location].askResourceGroupName}}"
+    var_certKeyvaultName: "{{var_NamesDictionary[var_mlopsEnv][var_location].certKeyvaultName}}"
+    var_omsSubscriptionId: "{{var_NamesDictionary[var_mlopsEnv][var_location].omsSubscriptionId}}"
+    var_omsResourceGroup: "{{var_NamesDictionary[var_mlopsEnv][var_location].omsResourceGroup}}"
+    var_omsWorkspaceName: "{{var_NamesDictionary[var_mlopsEnv][var_location].omsWorkspaceName}}"
+
+- name: Set Template IDs for launching in Ansible PROD Tower
+  set_fact:
+    var_AppInsights_TemplateID: "1234"
+    var_StorageAccount_TemplateID: "1234"
+    var_keyValut_TemplateID: "1234"
+    var_MLworkspace_TemplateID: "1234"
+    var_ResourceGroup_TemplateID: "1234"
+    var_ADO_TemplateID: "1234"
+  when: Var_Environment == "Production"
+
+- name: Credential Encode
+  shell: echo {{var_credentials | b64encode }}
+  register: encode
+  no_log: "{{var_AnsibleLogs}}"
+
+- name: Request requester ID from API and generate ME ID
+  uri:
+    url: "{{var_AnsibleAPIUrl}}/api/v2/me/"
+    method: GET
+    status_code: 200,409
+    timeout: 60
+    body_format: json
+    validate_certs: no
+    headers: 
+      content-Type: "application/json"
+      Authorization: "Basic {{encode.stdout }}"
+  register: meid
+  no_log: "{{var_AnsibleLogs}}"
+
+- name: GEt ME ID
+  set_fact:
+    meid: "{{meid.json.results[0].id}}"
+
+- name: Request authtoken form API
+  uri:
+    url: "{{var_AnsibleAPIUrl}}/api/v2/{{meid}}/personal_tokens/"
+    method: POST
+    return_content: yes
+    status_code: 201,409
+    timeout: 60
+    body_format: json
+    body: '{"description" : "AnsibleTower-Powershell", "scope", "write" }'
+    validate_certs: no
+    headers: 
+      content-Type: "application/json"
+      Authorization: "Basic {{encode.stdout }}"
+  register: authtoken
+
+- name: Fetch Token
+  set_fact:
+    meidtoken: "{{authtoken.json.token}}"
+
+- name: Get MeaningFul API token
+  uri:
+    url: "{{ var_mnfTokenUri }}"
+    method: POST
+    body_format: raw
+    body: client-id = {{ var_mnfClientID }} & client_secret== {{ var_mnfClientSecret }}     &scope= {{ var_mnfScope }} &grant_type= = {{ var_mnfGrantType }} &resource== {{ var_mnfClientIDResource }}
+    return_content: yes
+    status_code: 200
+    timeout: 600
+    headers: 
+      content-Type: "application/x-www-form-urlencoded"
+  register: var_mnfTokenUri
+  no_log: "{{var_AnsibleLogs}}"
+
+- name: Request to get the RS Name form MeaningFul if already exitst -prod and dev
+  uri:
+    url: "{{ var_mnfTokenUri }}"
+    method: POST
+    body_format: json
+    body: '
+    "productName": "{{ var_productName.stdout }}",
+    "resourceTypeName": "{{ item }}",
+    "roleName": "",
+    "projectName": "{{ var_projectName.stdout }}",
+    "regionName": "{{ var_location }}",
+    "environmentName": "{{ var_env }}",
+    "environmentNumber": null,'
+    return_content: yes
+    status_code: 200,201,409
+    timeout: 60
+    validate_certs: no
+    headers:
+      content-Type: "application/json"
+      Authorization: "{{mnfTokenResponse.json.accessToken}}"
+    register: mnfresultout
+    with_items:
+      - "Resource Group"
+      - "Azure Container Registry"
+      - "Azure Application insights"
+      - "Azure KeyValut"
+      - "Storage Account"
+      - "Machine Learning Services"
+    ignore_errors: yes
+
+
+- name: Fetch ResourceGroup Name
+  set_fact:
+    var_resourceGroupName: "{{mnfresultout.results[0].json[0].name}}"
+  when: mnfresultout.results[0].status == 200
+
+- name: Fetch Azure container Registry Name
+  set_fact:
+    var_acrName: "{{mnfresultout.results[1].json[0].name}}"
+  when: mnfresultout.results[1].status == 200
+
+- name: Fetch Application Insights Name
+  set_fact:
+    var_appInsightsName: "{{mnfresultout.results[2].json[0].name}}"
+  when: mnfresultout.results[2].status == 200
+
+- name: Fetch Keyvalut Name
+  set_fact:
+    var_keyValultName: "{{mnfresultout.results[3].json[0].name}}"
+  when: mnfresultout.results[3].status == 200
+
+- name: Fetch Storage account Name
+  set_fact:
+    var_storageAccountName: "{{mnfresultout.results[4].json[0].name}}"
+  when: mnfresultout.results[4].status == 200 and mnfresultout.results[4].json[0] is defined
+
+- name: Fetch Storage account Name fro Datastore
+  set_fact:
+    var_DSstorageAccountName: "{{mnfresultout.results[4].json[1].name}}"
+  when: mnfresultout.results[4].status == 200 and mnfresultout.results[4].json[0=1] is defined and var_enabledatastore == "yes"
+
+- name: Fetch Machine learning workspace Name
+  set_fact:
+    var_storageAccountName: "{{mnfresultout.results[5].json[0].name}}"
+  when: mnfresultout.results[5].status == 200 and mnfresultout.results[5].json[0] is defined
+
+#Trigger BB template for Resource group creation
+
+#Trigger ARM template to provision Azure container registry
+#Trigger BB template for Application Insights creation
+#Trigger BB template for Keyvault creation  IMG20220720112907
+#Trigger BB template for Storage Account creation IMG20220720113103
+#Trigger BB template for Azure ML workspace creation IMG20220720113242
+#Trigger BB template for additional storage account for data store IMG20220720113434
+
+#Login to Azure IMG20220720113604 
+#Trigger ARM template to provision Compute instance
+#Create Data stores IMG20220720113737
+#create compute cluster IMG20220720113941
+#get deployment status of AKS attachment to ml workspcace IMG20220720113941
+#Attach AKS to ML workspace IMG20220720114015
+#Block for login to azure devops and get project information IMG20220720114113
+#Trigger ansible template to create Azure devops project if required IMG20220720114201
+#create standard Repos and pipelines
+
